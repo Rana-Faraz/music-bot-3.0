@@ -1,0 +1,52 @@
+{
+  "name": "music-bot",
+  "version": "1.0.0",
+  "description": "A Discord music bot that can play music from YouTube and Spotify",
+  "main": "dist/index.js",
+  "scripts": {
+    "start": "node dist/index.js",
+    "dev": "nodemon --exec ts-node src/index.ts",
+    "build": "tsc",
+    "lint": "eslint src --ext .ts",
+    "clean": "rimraf dist"
+  },
+  "keywords": [
+    "discord",
+    "bot",
+    "music",
+    "youtube",
+    "spotify"
+  ],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/fluent-ffmpeg": "^2.1.27",
+    "@types/fs-extra": "^11.0.4",
+    "@types/node": "^22.13.11",
+    "@types/spotify-web-api-node": "^5.0.11",
+    "@types/winston": "^2.4.4",
+    "nodemon": "^3.1.9",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.2",
+    "@types/better-queue": "^3.8.6"
+  },
+  "dependencies": {
+    "@discordjs/opus": "^0.10.0",
+    "@discordjs/rest": "^2.4.3",
+    "@discordjs/voice": "^0.18.0",
+    "axios": "^1.8.4",
+    "better-queue": "^3.8.12",
+    "discord-api-types": "^0.37.119",
+    "discord.js": "^14.18.0",
+    "dotenv": "^16.4.7",
+    "ffmpeg-static": "^5.2.0",
+    "fluent-ffmpeg": "^2.1.3",
+    "ioredis": "^5.6.0",
+    "libsodium-wrappers": "^0.7.15",
+    "neverthrow": "^6.1.0",
+    "play-dl": "^1.9.7",
+    "spotify-web-api-node": "^5.0.2",
+    "winston": "^3.12.0",
+    "youtube-dl-exec": "^3.0.19"
+  }
+}
