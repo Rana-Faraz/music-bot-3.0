@@ -1,7 +1,6 @@
 import { 
     AudioPlayer, 
     AudioPlayerStatus, 
-    AudioResource, 
     createAudioPlayer, 
     createAudioResource,
     entersState,
@@ -17,13 +16,6 @@ import { err } from 'neverthrow';
 import { EventEmitter } from 'events';
 import { YouTubeService, VideoInfo } from '../youtube/YouTubeService';
 
-interface TrackStateEvents {
-    trackStart: (guildId: string) => void;
-    trackEnd: (guildId: string) => void;
-    trackPause: (guildId: string) => void;
-    trackResume: (guildId: string) => void;
-    trackError: (guildId: string, error: Error) => void;
-}
 
 export class VoiceService extends EventEmitter {
     private static instance: VoiceService;
@@ -69,15 +61,8 @@ export class VoiceService extends EventEmitter {
                 newState: newState.status
             });
 
-            // Handle state transitions
-            if (oldState.status !== AudioPlayerStatus.Playing && newState.status === AudioPlayerStatus.Playing) {
-                this.emit('trackStart', guildId);
-            } else if (oldState.status === AudioPlayerStatus.Playing && newState.status === AudioPlayerStatus.Idle) {
+            if (oldState.status === AudioPlayerStatus.Playing && newState.status === AudioPlayerStatus.Idle) {
                 this.emit('trackEnd', guildId);
-            } else if (oldState.status === AudioPlayerStatus.Playing && newState.status === AudioPlayerStatus.Paused) {
-                this.emit('trackPause', guildId);
-            } else if (oldState.status === AudioPlayerStatus.Paused && newState.status === AudioPlayerStatus.Playing) {
-                this.emit('trackResume', guildId);
             }
         });
 
@@ -186,6 +171,8 @@ export class VoiceService extends EventEmitter {
                 url: videoInfo.url
             });
 
+            this.emit('trackStart', guildId);
+
             return videoInfoResult;
         } catch (error) {
             return err(createError(
@@ -219,7 +206,7 @@ export class VoiceService extends EventEmitter {
         const player = this.players.get(guildId);
         if (player) {
             player.pause();
-            logger.debug('Paused playback', { guildId });
+            this.emit('trackPause', guildId);
         }
     }
 
@@ -227,7 +214,7 @@ export class VoiceService extends EventEmitter {
         const player = this.players.get(guildId);
         if (player) {
             player.unpause();
-            logger.debug('Resumed playback', { guildId });
+            this.emit('trackResume', guildId);
         }
     }
 }

@@ -191,8 +191,11 @@ export class QueueService {
         }
 
         try {
-            const track = queue.tracks.shift()!;
-            queue.currentTrack = track;
+            // Only shift from queue if there's no current track
+            const track = queue.currentTrack || queue.tracks.shift()!;
+            if (!queue.currentTrack) {
+                queue.currentTrack = track;
+            }
             queue.isPlaying = true;
             queue.lastActivity = new Date();
 
@@ -227,21 +230,57 @@ export class QueueService {
             });
         }
 
-        logger.debug('Skipping current track', {
+        logger.debug('Starting skip operation', {
             guildId,
             currentTrack: queue.currentTrack?.info.title,
-            remainingTracks: queue.tracks.length
+            queueLength: queue.tracks.length,
+            queueTracks: queue.tracks.map(t => t.info.title)
         });
 
-        queue.currentTrack = null;
-        queue.isPlaying = false;
+        // Add current track to history before skipping
+        if (queue.currentTrack) {
+            queue.trackHistory.push(queue.currentTrack);
+            // Keep only last 50 tracks in history
+            if (queue.trackHistory.length > 50) {
+                queue.trackHistory.shift();
+            }
+        }
+
+        // Stop current playback
         this.voiceService.stopPlayback(guildId);
         
-        // Process next track if available
+        // If there are more tracks, process the next one
         if (queue.tracks.length > 0) {
-            this.processQueue(guildId).catch(error => {
-                logger.error('Error processing next track after skip', error);
+            const nextTrack = queue.tracks.shift();
+            if (!nextTrack) {
+                return err({
+                    type: ErrorType.Unknown,
+                    message: 'Failed to get next track from queue'
+                });
+            }
+
+            logger.debug('Processing next track in skip', {
+                guildId,
+                nextTrack: nextTrack.info.title,
+                remainingTracks: queue.tracks.length
             });
+
+            // Set as current track
+            queue.currentTrack = nextTrack;
+            queue.isPlaying = true;
+
+            // Play the track
+            this.voiceService.playYouTubeAudio(guildId, nextTrack.info.url)
+                .catch(error => {
+                    logger.error('Error playing next track after skip', error);
+                    queue.isPlaying = false;
+                    queue.currentTrack = null;
+                });
+        } else {
+            // No more tracks, reset the queue state
+            queue.currentTrack = null;
+            queue.isPlaying = false;
+            logger.debug('No more tracks in queue after skip', { guildId });
         }
 
         return ok(undefined);
