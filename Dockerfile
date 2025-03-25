@@ -1,4 +1,4 @@
-FROM node:20-bullseye
+FROM node:20-alpine
 
 # Install dependencies
 RUN apt-get update && \
