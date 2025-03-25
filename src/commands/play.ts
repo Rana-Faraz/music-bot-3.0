@@ -1,23 +1,26 @@
-import { ChatInputCommandInteraction, SlashCommandBuilder } from 'discord.js';
+import { ChatInputCommandInteraction, SlashCommandBuilder, EmbedBuilder } from 'discord.js';
 import { VoiceService } from '../services/voice/VoiceService';
+import { QueueService } from '../services/queue/QueueService';
+import { YouTubeService } from '../services/youtube/YouTubeService';
 import { logger } from '../services/logger/LoggerService';
 import { ErrorType } from '../utils/error';
-import path from 'path';
-import fs from 'fs/promises';
 
 export const data = new SlashCommandBuilder()
     .setName('play')
-    .setDescription('Play a local audio file')
+    .setDescription('Play audio from a YouTube URL')
     .addStringOption(option =>
         option
-            .setName('file')
-            .setDescription('The name of the audio file to play')
+            .setName('url')
+            .setDescription('The YouTube URL to play')
             .setRequired(true)
     );
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
     const voiceService = VoiceService.getInstance();
-    const fileName = interaction.options.getString('file', true);
+    const queueService = QueueService.getInstance();
+    const youtubeService = YouTubeService.getInstance();
+    
+    const url = interaction.options.getString('url', true);
     const guildId = interaction.guildId;
 
     if (!guildId) {
@@ -32,7 +35,24 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
         // Defer reply as voice operations might take time
         await interaction.deferReply();
 
-        // Join the voice channel
+        // Validate YouTube URL
+        if (!youtubeService.isValidYouTubeUrl(url)) {
+            await interaction.editReply({
+                content: '❌ Invalid YouTube URL'
+            });
+            return;
+        }
+
+        // Get video info first
+        const videoInfoResult = await youtubeService.getVideoInfo(url);
+        if (videoInfoResult.isErr()) {
+            await interaction.editReply({
+                content: `❌ ${videoInfoResult.error.message}`
+            });
+            return;
+        }
+
+        // Join the voice channel if not already in one
         const joinResult = await voiceService.joinChannel(interaction.member as any);
         if (joinResult.isErr()) {
             await interaction.editReply({
@@ -41,37 +61,43 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
             return;
         }
 
-        // Construct file path and check if file exists
-        const audioDir = path.join(process.cwd(), 'assets');
-        const filePath = path.join(audioDir, fileName);
+        // Add to queue
+        const queueResult = await queueService.addToQueue(
+            guildId,
+            videoInfoResult.value,
+            interaction.member as any
+        );
 
-        try {
-            await fs.access(filePath);
-        } catch {
+        if (queueResult.isErr()) {
             await interaction.editReply({
-                content: `❌ Audio file "${fileName}" not found in the audio directory`
+                content: `❌ ${queueResult.error.message}`
             });
             return;
         }
 
-        // Play the audio file
-        const playResult = await voiceService.playLocalAudio(guildId, filePath);
-        if (playResult.isErr()) {
-            await interaction.editReply({
-                content: `❌ ${playResult.error.message}`
-            });
-            return;
-        }
+        const queue = queueService.getQueue(guildId);
+        const position = queue ? queue.tracks.length : 0;
+        const isNowPlaying = position === 0;
 
-        await interaction.editReply({
-            content: `🎵 Now playing: ${fileName}`
-        });
+        const embed = new EmbedBuilder()
+            .setColor('#FF0000')
+            .setTitle(isNowPlaying ? 'Now Playing 🎵' : 'Added to Queue 📝')
+            .setDescription(`[${videoInfoResult.value.title}](${videoInfoResult.value.url})`)
+            .addFields(
+                { name: 'Duration', value: videoInfoResult.value.duration, inline: true },
+                { name: 'Position in queue', value: isNowPlaying ? 'Now Playing' : `#${position}`, inline: true },
+                { name: 'Requested by', value: interaction.member?.user.username || 'Unknown', inline: true }
+            )
+            .setThumbnail(videoInfoResult.value.thumbnail)
+            .setTimestamp();
+
+        await interaction.editReply({ embeds: [embed] });
 
     } catch (error) {
         logger.error('Error in play command', error, {
             errorType: ErrorType.Unknown,
             guildId,
-            fileName
+            url
         });
 
         const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';

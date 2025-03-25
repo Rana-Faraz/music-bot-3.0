@@ -7,22 +7,36 @@ import {
     entersState,
     joinVoiceChannel,
     VoiceConnection,
-    VoiceConnectionStatus
+    VoiceConnectionStatus,
+    StreamType
 } from '@discordjs/voice';
 import { GuildMember, VoiceChannel, StageChannel } from 'discord.js';
 import { logger } from '../logger/LoggerService';
 import { AppResult, ErrorType, handleAsync, createError } from '../../utils/error';
 import { err } from 'neverthrow';
-import path from 'path';
+import { EventEmitter } from 'events';
+import { YouTubeService, VideoInfo } from '../youtube/YouTubeService';
 
-export class VoiceService {
+interface TrackStateEvents {
+    trackStart: (guildId: string) => void;
+    trackEnd: (guildId: string) => void;
+    trackPause: (guildId: string) => void;
+    trackResume: (guildId: string) => void;
+    trackError: (guildId: string, error: Error) => void;
+}
+
+export class VoiceService extends EventEmitter {
     private static instance: VoiceService;
     private connections: Map<string, VoiceConnection>;
     private players: Map<string, AudioPlayer>;
+    private youtubeService: YouTubeService;
 
     private constructor() {
+        super();
         this.connections = new Map();
         this.players = new Map();
+        this.youtubeService = YouTubeService.getInstance();
+        logger.debug('VoiceService initialized');
     }
 
     public static getInstance(): VoiceService {
@@ -44,16 +58,32 @@ export class VoiceService {
         });
     }
 
-    private setupPlayerHandlers(player: AudioPlayer, guildId: string): void {
+    private setupPlayerHandlers(guildId: string): void {
+        const player = this.players.get(guildId);
+        if (!player) return;
+
         player.on('stateChange', (oldState, newState) => {
-            logger.debug(`Audio player state changed for guild ${guildId}`, {
-                from: oldState.status,
-                to: newState.status
+            logger.debug('Player state changed', {
+                guildId,
+                oldState: oldState.status,
+                newState: newState.status
             });
+
+            // Handle state transitions
+            if (oldState.status !== AudioPlayerStatus.Playing && newState.status === AudioPlayerStatus.Playing) {
+                this.emit('trackStart', guildId);
+            } else if (oldState.status === AudioPlayerStatus.Playing && newState.status === AudioPlayerStatus.Idle) {
+                this.emit('trackEnd', guildId);
+            } else if (oldState.status === AudioPlayerStatus.Playing && newState.status === AudioPlayerStatus.Paused) {
+                this.emit('trackPause', guildId);
+            } else if (oldState.status === AudioPlayerStatus.Paused && newState.status === AudioPlayerStatus.Playing) {
+                this.emit('trackResume', guildId);
+            }
         });
 
         player.on('error', (error) => {
-            logger.error(`Audio player error in guild ${guildId}`, error);
+            logger.error('Player error', { guildId, error });
+            this.emit('trackError', guildId, error);
         });
     }
 
@@ -90,8 +120,8 @@ export class VoiceService {
             // Create and set up audio player if it doesn't exist
             if (!this.players.has(voiceChannel.guild.id)) {
                 const player = createAudioPlayer();
-                this.setupPlayerHandlers(player, voiceChannel.guild.id);
                 this.players.set(voiceChannel.guild.id, player);
+                this.setupPlayerHandlers(voiceChannel.guild.id);
                 connection.subscribe(player);
             }
 
@@ -106,10 +136,10 @@ export class VoiceService {
         }
     }
 
-    public async playLocalAudio(
+    public async playYouTubeAudio(
         guildId: string, 
-        filePath: string
-    ): Promise<AppResult<void>> {
+        url: string
+    ): Promise<AppResult<VideoInfo>> {
         const connection = this.connections.get(guildId);
         const player = this.players.get(guildId);
 
@@ -120,63 +150,84 @@ export class VoiceService {
             ));
         }
 
+        if (!this.youtubeService.isValidYouTubeUrl(url)) {
+            return err(createError(
+                ErrorType.Validation,
+                'Invalid YouTube URL'
+            ));
+        }
+
         try {
-            // Validate file exists and has correct extension
-            if (!filePath.match(/\.(mp3|wav|ogg|m4a)$/i)) {
-                return err(createError(
-                    ErrorType.Validation,
-                    'Invalid audio file format. Supported formats: mp3, wav, ogg, m4a'
-                ));
+            // Get video info
+            const videoInfoResult = await this.youtubeService.getVideoInfo(url);
+            if (videoInfoResult.isErr()) {
+                return err(videoInfoResult.error);
+            }
+            const videoInfo = videoInfoResult.value;
+
+            // Get audio URL
+            const audioUrlResult = await this.youtubeService.getAudioUrl(url);
+            if (audioUrlResult.isErr()) {
+                return err(audioUrlResult.error);
             }
 
-            const resource = createAudioResource(filePath);
+            // Create and play audio resource
+            const resource = createAudioResource(audioUrlResult.value, {
+                inputType: StreamType.Arbitrary,
+            });
+
             player.play(resource);
 
             // Wait for the player to start playing
             await entersState(player, AudioPlayerStatus.Playing, 5000);
 
-            logger.info(`Started playing audio in guild ${guildId}`, {
-                file: path.basename(filePath)
+            logger.info(`Started playing YouTube audio in guild ${guildId}`, {
+                title: videoInfo.title,
+                url: videoInfo.url
             });
 
-            return handleAsync(Promise.resolve());
+            return videoInfoResult;
         } catch (error) {
             return err(createError(
                 ErrorType.Discord,
-                'Failed to play audio file',
+                'Failed to play YouTube audio',
                 error
             ));
         }
     }
 
-    public async leaveChannel(guildId: string): Promise<AppResult<void>> {
-        const connection = this.connections.get(guildId);
+    public stopPlayback(guildId: string): void {
         const player = this.players.get(guildId);
-
-        if (!connection) {
-            return err(createError(
-                ErrorType.Validation,
-                'Not connected to a voice channel in this server'
-            ));
+        if (player) {
+            player.stop();
+            logger.debug('Stopped playback', { guildId });
         }
+    }
 
-        try {
-            if (player) {
-                player.stop();
-                this.players.delete(guildId);
-            }
-
+    public async leaveChannel(guildId: string): Promise<void> {
+        const connection = this.connections.get(guildId);
+        if (connection) {
+            this.stopPlayback(guildId);
             connection.destroy();
             this.connections.delete(guildId);
-
-            logger.info(`Left voice channel in guild ${guildId}`);
-            return handleAsync(Promise.resolve());
-        } catch (error) {
-            return err(createError(
-                ErrorType.Discord,
-                'Failed to leave voice channel',
-                error
-            ));
+            this.players.delete(guildId);
+            logger.debug('Left voice channel', { guildId });
         }
     }
-} 
+
+    public pausePlayback(guildId: string): void {
+        const player = this.players.get(guildId);
+        if (player) {
+            player.pause();
+            logger.debug('Paused playback', { guildId });
+        }
+    }
+
+    public resumePlayback(guildId: string): void {
+        const player = this.players.get(guildId);
+        if (player) {
+            player.unpause();
+            logger.debug('Resumed playback', { guildId });
+        }
+    }
+}

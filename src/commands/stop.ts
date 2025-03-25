@@ -21,19 +21,10 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 
     try {
         await interaction.deferReply();
-
-        const leaveResult = await voiceService.leaveChannel(guildId);
-        if (leaveResult.isErr()) {
-            await interaction.editReply({
-                content: `❌ ${leaveResult.error.message}`
-            });
-            return;
-        }
-
+        await voiceService.leaveChannel(guildId);
         await interaction.editReply({
             content: '⏹️ Stopped playing and left the voice channel'
         });
-
     } catch (error) {
         logger.error('Error in stop command', error, {
             errorType: ErrorType.Unknown,
@@ -47,4 +38,4 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
             logger.error('Failed to send error message', e);
         });
     }
-} 
+}
