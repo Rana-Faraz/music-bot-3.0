@@ -1,11 +1,18 @@
 import { VideoInfo } from '../services/youtube/YouTubeService';
 import { GuildMember } from 'discord.js';
 
+export enum LoopMode {
+    NONE = 'none',
+    TRACK = 'track',
+    QUEUE = 'queue'
+}
+
 export interface TrackState {
     startedAt: Date | null;
     pausedAt: Date | null;
     totalPausedDuration: number; // in milliseconds
     isPaused: boolean;
+    wasSkipped: boolean;
 }
 
 export interface QueuedTrack {
@@ -21,4 +28,5 @@ export interface GuildQueue {
     isPlaying: boolean;
     lastActivity: Date;
     trackHistory: QueuedTrack[];
+    loopMode: LoopMode;
 }

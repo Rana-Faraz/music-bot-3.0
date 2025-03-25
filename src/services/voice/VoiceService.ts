@@ -12,7 +12,7 @@ import {
 import { GuildMember, VoiceChannel, StageChannel } from 'discord.js';
 import { logger } from '../logger/LoggerService';
 import { AppResult, ErrorType, handleAsync, createError } from '../../utils/error';
-import { err } from 'neverthrow';
+import { err, ok } from 'neverthrow';
 import { EventEmitter } from 'events';
 import { YouTubeService, VideoInfo } from '../youtube/YouTubeService';
 
@@ -21,13 +21,11 @@ export class VoiceService extends EventEmitter {
     private static instance: VoiceService;
     private connections: Map<string, VoiceConnection>;
     private players: Map<string, AudioPlayer>;
-    private youtubeService: YouTubeService;
 
     private constructor() {
         super();
         this.connections = new Map();
         this.players = new Map();
-        this.youtubeService = YouTubeService.getInstance();
         logger.debug('VoiceService initialized');
     }
 
@@ -43,6 +41,11 @@ export class VoiceService extends EventEmitter {
             logger.debug(`Voice connection state changed for guild ${guildId}`, {
                 state: newState.status
             });
+        });
+
+        connection.on(VoiceConnectionStatus.Disconnected, () => {
+            logger.debug(`Voice connection disconnected for guild ${guildId}`);
+            this.emit('connectionDisconnected', guildId);
         });
 
         connection.on('error', (error) => {
@@ -144,6 +147,7 @@ export class VoiceService extends EventEmitter {
             
             return handleAsync(Promise.resolve());
         } catch (error) {
+            logger.error('Error joining voice channel', { error });
             return err(createError(
                 ErrorType.Discord,
                 'Failed to join voice channel',
@@ -155,7 +159,7 @@ export class VoiceService extends EventEmitter {
     public async playYouTubeAudio(
         guildId: string, 
         url: string
-    ): Promise<AppResult<VideoInfo>> {
+    ) {
         const connection = this.connections.get(guildId);
         const player = this.players.get(guildId);
 
@@ -166,29 +170,13 @@ export class VoiceService extends EventEmitter {
             ));
         }
 
-        if (!this.youtubeService.isValidYouTubeUrl(url)) {
-            return err(createError(
-                ErrorType.Validation,
-                'Invalid YouTube URL'
-            ));
-        }
 
         try {
-            // Get video info
-            const videoInfoResult = await this.youtubeService.getVideoInfo(url);
-            if (videoInfoResult.isErr()) {
-                return err(videoInfoResult.error);
-            }
-            const videoInfo = videoInfoResult.value;
+            // Get video info and audio URL in one call
 
-            // Get audio URL
-            const audioUrlResult = await this.youtubeService.getAudioUrl(url);
-            if (audioUrlResult.isErr()) {
-                return err(audioUrlResult.error);
-            }
 
-            // Create and play audio resource
-            const resource = createAudioResource(audioUrlResult.value, {
+            // Create and play audio resource using the audio URL from video info
+            const resource = createAudioResource(url, {
                 inputType: StreamType.Arbitrary,
             });
 
@@ -197,14 +185,11 @@ export class VoiceService extends EventEmitter {
             // Wait for the player to start playing
             await entersState(player, AudioPlayerStatus.Playing, 5000);
 
-            logger.info(`Started playing YouTube audio in guild ${guildId}`, {
-                title: videoInfo.title,
-                url: videoInfo.url
-            });
+            logger.info(`Started playing YouTube audio in guild ${guildId}`);
 
             this.emit('trackStart', guildId);
 
-            return videoInfoResult;
+            return ok(undefined);
         } catch (error) {
             return err(createError(
                 ErrorType.Discord,

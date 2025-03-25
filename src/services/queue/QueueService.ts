@@ -1,15 +1,17 @@
 import { GuildMember } from 'discord.js';
 import { VideoInfo } from '../youtube/YouTubeService';
-import { GuildQueue, QueuedTrack, TrackState } from '../../types/queue';
+import { GuildQueue, QueuedTrack } from '../../types/queue';
 import { logger } from '../logger/LoggerService';
 import { AppResult, ErrorType } from '../../utils/error';
 import { err, ok } from 'neverthrow';
 import { VoiceService } from '../voice/VoiceService';
+import { LoopMode } from '../../types/queue';
 
 export class QueueService {
     private static instance: QueueService;
     private queues: Map<string, GuildQueue>;
     private voiceService: VoiceService;
+    private readonly MAX_HISTORY_SIZE = 50;
 
     private constructor() {
         this.queues = new Map();
@@ -19,97 +21,30 @@ export class QueueService {
     }
 
     private setupVoiceServiceHandlers(): void {
+        this.voiceService.on('connectionDisconnected', (guildId: string) => {
+            logger.debug(`Voice connection disconnected for guild ${guildId}`);
+            this.clearQueue(guildId);
+        });
+
         this.voiceService.on('trackStart', (guildId: string) => {
-            const queue = this.getQueue(guildId);
-            if (queue?.currentTrack) {
-                queue.currentTrack.state.startedAt = new Date();
-                queue.currentTrack.state.isPaused = false;
-                logger.info('Track started', {
-                    guildId,
-                    track: queue.currentTrack.info.title,
-                    startedAt: queue.currentTrack.state.startedAt
-                });
-            }
+            this.handleTrackStart(guildId);
         });
 
         this.voiceService.on('trackEnd', (guildId: string) => {
-            const queue = this.getQueue(guildId);
-            if (queue?.currentTrack) {
-                const endedTrack = queue.currentTrack;
-                const endTime = new Date();
-                const startTime = endedTrack.state.startedAt;
-                const pausedDuration = endedTrack.state.totalPausedDuration;
-
-                if (startTime) {
-                    const totalDuration = endTime.getTime() - startTime.getTime();
-                    const actualPlaytime = totalDuration - pausedDuration;
-
-                    logger.info('Track ended', {
-                        guildId,
-                        track: endedTrack.info.title,
-                        totalDuration: totalDuration,
-                        actualPlaytime: actualPlaytime,
-                        pausedDuration: pausedDuration
-                    });
-                }
-
-                // Add to history
-                queue.trackHistory.push(endedTrack);
-                // Keep only last 50 tracks in history
-                if (queue.trackHistory.length > 50) {
-                    queue.trackHistory.shift();
-                }
-
-                // Process next track if available
-                if (queue.tracks.length > 0) {
-                    this.processQueue(guildId).catch(error => {
-                        logger.error('Error processing next track after end', error);
-                    });
-                } else {
-                    queue.isPlaying = false;
-                    queue.currentTrack = null;
-                }
-            }
+            this.handleTrackEnd(guildId, false);
         });
 
         this.voiceService.on('trackPause', (guildId: string) => {
-            const queue = this.getQueue(guildId);
-            if (queue?.currentTrack) {
-                queue.currentTrack.state.pausedAt = new Date();
-                queue.currentTrack.state.isPaused = true;
-                logger.debug('Track paused', {
-                    guildId,
-                    track: queue.currentTrack.info.title,
-                    pausedAt: queue.currentTrack.state.pausedAt
-                });
-            }
+            this.handleTrackPause(guildId);
         });
 
         this.voiceService.on('trackResume', (guildId: string) => {
-            const queue = this.getQueue(guildId);
-            if (queue?.currentTrack) {
-                const track = queue.currentTrack;
-                if (track.state.pausedAt) {
-                    const pauseDuration = new Date().getTime() - track.state.pausedAt.getTime();
-                    track.state.totalPausedDuration += pauseDuration;
-                }
-                track.state.pausedAt = null;
-                track.state.isPaused = false;
-                logger.debug('Track resumed', {
-                    guildId,
-                    track: track.info.title,
-                    totalPausedDuration: track.state.totalPausedDuration
-                });
-            }
+            this.handleTrackResume(guildId);
         });
 
         this.voiceService.on('trackError', (guildId: string, error: Error) => {
             logger.error('Track playback error', { guildId, error });
-            const queue = this.getQueue(guildId);
-            if (queue) {
-                // Skip to next track on error
-                this.skipTrack(guildId);
-            }
+            this.handleTrackEnd(guildId, true);
         });
     }
 
@@ -127,10 +62,150 @@ export class QueueService {
                 currentTrack: null,
                 isPlaying: false,
                 lastActivity: new Date(),
-                trackHistory: []
+                trackHistory: [],
+                loopMode: LoopMode.NONE
             });
         }
         return this.queues.get(guildId)!;
+    }
+
+    private handleTrackStart(guildId: string): void {
+        const queue = this.getQueue(guildId);
+        if (queue?.currentTrack) {
+            queue.currentTrack.state.startedAt = new Date();
+            queue.currentTrack.state.isPaused = false;
+            logger.info('Track started', {
+                guildId,
+                track: queue.currentTrack.info.title,
+                startedAt: queue.currentTrack.state.startedAt,
+                loopMode: queue.loopMode
+            });
+        }
+    }
+
+    private handleTrackPause(guildId: string): void {
+        const queue = this.getQueue(guildId);
+        if (queue?.currentTrack) {
+            queue.currentTrack.state.pausedAt = new Date();
+            queue.currentTrack.state.isPaused = true;
+            logger.debug('Track paused', {
+                guildId,
+                track: queue.currentTrack.info.title,
+                pausedAt: queue.currentTrack.state.pausedAt
+            });
+        }
+    }
+
+    private handleTrackResume(guildId: string): void {
+        const queue = this.getQueue(guildId);
+        if (queue?.currentTrack) {
+            const track = queue.currentTrack;
+            if (track.state.pausedAt) {
+                const pauseDuration = new Date().getTime() - track.state.pausedAt.getTime();
+                track.state.totalPausedDuration += pauseDuration;
+            }
+            track.state.pausedAt = null;
+            track.state.isPaused = false;
+            logger.debug('Track resumed', {
+                guildId,
+                track: track.info.title,
+                totalPausedDuration: track.state.totalPausedDuration
+            });
+        }
+    }
+
+    private async playNextTrack(guildId: string, queue: GuildQueue): Promise<void> {
+        if (!queue.tracks.length) {
+            queue.currentTrack = null;
+            queue.isPlaying = false;
+            logger.debug('No more tracks in queue', { guildId });
+            return;
+        }
+
+        const nextTrack = queue.tracks.shift()!;
+        queue.currentTrack = nextTrack;
+        queue.isPlaying = true;
+
+        logger.debug('Playing next track', {
+            guildId,
+            track: nextTrack.info.title,
+            remainingTracks: queue.tracks.length
+        });
+
+        try {
+            await this.voiceService.playYouTubeAudio(guildId, nextTrack.info.audioUrl || nextTrack.info.url);
+        } catch (error) {
+            logger.error('Error playing next track', error);
+            queue.isPlaying = false;
+            queue.currentTrack = null;
+            // Try to play the next track if available
+            await this.playNextTrack(guildId, queue);
+        }
+    }
+
+    private addToHistory(queue: GuildQueue, track: QueuedTrack): void {
+        queue.trackHistory.push(track);
+        if (queue.trackHistory.length > this.MAX_HISTORY_SIZE) {
+            queue.trackHistory.shift();
+        }
+    }
+
+    private handleTrackEnd(guildId: string, isError: boolean): void {
+        const queue = this.getQueue(guildId);
+        if (!queue?.currentTrack) return;
+
+        const endedTrack = queue.currentTrack;
+        
+        // Log track completion metrics
+        if (!isError && endedTrack.state.startedAt) {
+            const endTime = new Date();
+            const totalDuration = endTime.getTime() - endedTrack.state.startedAt.getTime();
+            const actualPlaytime = totalDuration - endedTrack.state.totalPausedDuration;
+
+            logger.info('Track ended', {
+                guildId,
+                track: endedTrack.info.title,
+                totalDuration,
+                actualPlaytime,
+                pausedDuration: endedTrack.state.totalPausedDuration,
+                loopMode: queue.loopMode,
+                wasSkipped: endedTrack.state.wasSkipped
+            });
+        }
+
+        // Only apply loop mode logic if the track wasn't skipped
+        if (!endedTrack.state.wasSkipped) {
+            switch (queue.loopMode) {
+                case LoopMode.TRACK:
+                    if (!isError) {
+                        this.voiceService.playYouTubeAudio(guildId, endedTrack.info.audioUrl || endedTrack.info.url);
+                        return;
+                    }
+                    break;
+
+                case LoopMode.QUEUE:
+                    queue.tracks.push({
+                        ...endedTrack,
+                        state: {
+                            startedAt: null,
+                            pausedAt: null,
+                            totalPausedDuration: 0,
+                            isPaused: false,
+                            wasSkipped: false
+                        }
+                    });
+                    break;
+
+                case LoopMode.NONE:
+                    this.addToHistory(queue, endedTrack);
+                    break;
+            }
+        } else {
+            // If track was skipped, always add it to history regardless of loop mode
+            this.addToHistory(queue, endedTrack);
+        }
+
+        this.playNextTrack(guildId, queue);
     }
 
     public async addToQueue(
@@ -148,7 +223,8 @@ export class QueueService {
                     startedAt: null,
                     pausedAt: null,
                     totalPausedDuration: 0,
-                    isPaused: false
+                    isPaused: false,
+                    wasSkipped: false
                 }
             };
 
@@ -191,11 +267,8 @@ export class QueueService {
         }
 
         try {
-            // Only shift from queue if there's no current track
-            const track = queue.currentTrack || queue.tracks.shift()!;
-            if (!queue.currentTrack) {
-                queue.currentTrack = track;
-            }
+            const track = queue.tracks.shift()!;
+            queue.currentTrack = track;
             queue.isPlaying = true;
             queue.lastActivity = new Date();
 
@@ -205,7 +278,7 @@ export class QueueService {
                 remainingTracks: queue.tracks.length
             });
 
-            const playResult = await this.voiceService.playYouTubeAudio(guildId, track.info.url);
+            const playResult = await this.voiceService.playYouTubeAudio(guildId, track.info.audioUrl || track.info.url);
             if (playResult.isErr()) {
                 return err(playResult.error);
             }
@@ -230,59 +303,19 @@ export class QueueService {
             });
         }
 
-        logger.debug('Starting skip operation', {
+        logger.debug('Skipping current track', {
             guildId,
             currentTrack: queue.currentTrack?.info.title,
-            queueLength: queue.tracks.length,
-            queueTracks: queue.tracks.map(t => t.info.title)
+            queueLength: queue.tracks.length
         });
 
-        // Add current track to history before skipping
+        // Set a flag to indicate this track was skipped
         if (queue.currentTrack) {
-            queue.trackHistory.push(queue.currentTrack);
-            // Keep only last 50 tracks in history
-            if (queue.trackHistory.length > 50) {
-                queue.trackHistory.shift();
-            }
+            queue.currentTrack.state.wasSkipped = true;
         }
 
-        // Stop current playback
+        // Stop current playback - this will trigger handleTrackEnd through the event
         this.voiceService.stopPlayback(guildId);
-        
-        // If there are more tracks, process the next one
-        if (queue.tracks.length > 0) {
-            const nextTrack = queue.tracks.shift();
-            if (!nextTrack) {
-                return err({
-                    type: ErrorType.Unknown,
-                    message: 'Failed to get next track from queue'
-                });
-            }
-
-            logger.debug('Processing next track in skip', {
-                guildId,
-                nextTrack: nextTrack.info.title,
-                remainingTracks: queue.tracks.length
-            });
-
-            // Set as current track
-            queue.currentTrack = nextTrack;
-            queue.isPlaying = true;
-
-            // Play the track
-            this.voiceService.playYouTubeAudio(guildId, nextTrack.info.url)
-                .catch(error => {
-                    logger.error('Error playing next track after skip', error);
-                    queue.isPlaying = false;
-                    queue.currentTrack = null;
-                });
-        } else {
-            // No more tracks, reset the queue state
-            queue.currentTrack = null;
-            queue.isPlaying = false;
-            logger.debug('No more tracks in queue after skip', { guildId });
-        }
-
         return ok(undefined);
     }
 
@@ -300,7 +333,6 @@ export class QueueService {
             tracksCleared: queue.tracks.length
         });
 
-        queue.tracks = [];
         this.voiceService.stopPlayback(guildId);
         this.voiceService.leaveChannel(guildId);
         this.queues.delete(guildId);
@@ -314,5 +346,24 @@ export class QueueService {
             queue.lastActivity = new Date();
         }
         return queue;
+    }
+
+    public setLoopMode(guildId: string, mode: LoopMode): AppResult<LoopMode> {
+        const queue = this.queues.get(guildId);
+        if (!queue) {
+            return err({
+                type: ErrorType.Validation,
+                message: 'No queue exists for this server'
+            });
+        }
+
+        queue.loopMode = mode;
+        logger.debug('Loop mode changed', {
+            guildId,
+            mode,
+            currentTrack: queue.currentTrack?.info.title
+        });
+
+        return ok(mode);
     }
 } 

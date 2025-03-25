@@ -1,7 +1,6 @@
-import play from 'play-dl';
 import youtubeDl from 'youtube-dl-exec';
 import { logger } from '../logger/LoggerService';
-import { AppResult, ErrorType, handleAsync } from '../../utils/error';
+import { AppResult, ErrorType } from '../../utils/error';
 import { err, ok } from 'neverthrow';
 
 export interface VideoInfo {
@@ -9,10 +8,28 @@ export interface VideoInfo {
     url: string;
     duration: string;
     thumbnail: string;
+    description?: string;
+    views?: number;
+    audioUrl?: string;
 }
 
+interface YouTubeDlOptions {
+    format?: string;
+    getUrl?: boolean;
+    noWarnings?: boolean;
+    preferFreeFormats?: boolean;
+    dumpSingleJson?: boolean;
+    addHeader?: string[];
+    extractAudio?: boolean;
+}
+
+const DEFAULT_HEADERS = [
+    'referer:youtube.com',
+    'user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+];
+
 export class YouTubeService {
-    private static instance: YouTubeService;
+    private static instance: YouTubeService | null = null;
 
     private constructor() {
         logger.debug('YouTubeService initialized');
@@ -25,95 +42,81 @@ export class YouTubeService {
         return YouTubeService.instance;
     }
 
-    public async getVideoInfo(url: string): Promise<AppResult<VideoInfo>> {
-        logger.debug('Fetching video info', { url });
-        
+    private async executeYoutubeDl(url: string, options: YouTubeDlOptions): Promise<AppResult<any>> {
         try {
-            logger.debug('Calling play-dl video_info');
-            const videoInfo = await play.video_info(url);
+            logger.debug('Executing youtube-dl with options', { url, options });
             
-            if (!videoInfo || !videoInfo.video_details) {
-                logger.debug('No video details found in response', { videoInfo });
-                return err({
-                    type: ErrorType.Validation,
-                    message: 'Could not fetch video information'
-                });
-            }
-
-            const details = videoInfo.video_details;
-            logger.debug('Video details fetched successfully', {
-                title: details.title,
-                duration: details.durationRaw,
-                thumbnailCount: details.thumbnails.length
+            const result = await youtubeDl(url, {
+                ...options,
+                addHeader: [...(options.addHeader || []), ...DEFAULT_HEADERS]
             });
 
-            return ok({
-                title: details.title || 'Unknown Title',
-                url: details.url,
-                duration: details.durationRaw,
-                thumbnail: details.thumbnails[0]?.url || ''
-            });
-        } catch (error) {
-            logger.error('Error fetching video info', error, {
-                url,
-                errorType: ErrorType.Network
-            });
-            return err({
-                type: ErrorType.Network,
-                message: 'Failed to fetch video information',
-                originalError: error
-            });
-        }
-    }
-
-    public async getAudioUrl(videoUrl: string): Promise<AppResult<string>> {
-        logger.debug('Extracting audio URL', { videoUrl });
-        
-        try {
-            logger.debug('Calling youtube-dl with options', {
-                format: 'bestaudio',
-                getUrl: true,
-                noWarnings: true,
-                preferFreeFormats: true
-            });
-
-            const result = await youtubeDl(videoUrl, {
-                format: 'bestaudio',
-                getUrl: true,
-                noWarnings: true,
-                preferFreeFormats: true,
-                addHeader: [
-                    'referer:youtube.com',
-                    'user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-                ]
-            });
-
-            if (typeof result !== 'string') {
-                logger.debug('Invalid result from youtube-dl', { result });
-                return err({
-                    type: ErrorType.Validation,
-                    message: 'Could not extract audio URL'
-                });
-            }
-
-            logger.debug('Successfully extracted audio URL', {
-                urlLength: result.length,
-                urlStart: result.substring(0, 50) + '...' // Log just the start of the URL for debugging
-            });
-
+            logger.debug('youtube-dl execution successful', { resultType: typeof result });
             return ok(result);
         } catch (error) {
-            logger.error('Error extracting audio URL', error, {
-                videoUrl,
+            logger.error('Error executing youtube-dl', error, {
+                url,
+                options,
                 errorType: ErrorType.Network,
                 errorMessage: error instanceof Error ? error.message : 'Unknown error'
             });
             return err({
                 type: ErrorType.Network,
-                message: 'Failed to extract audio URL',
+                message: 'Failed to execute youtube-dl',
                 originalError: error
             });
         }
+    }
+
+    public async getVideoInfoWithAudio(url: string): Promise<AppResult<VideoInfo>> {
+        logger.debug('Fetching video info with audio URL', { url });
+
+        // First, get video info
+        const infoResult = await this.executeYoutubeDl(url, {
+            dumpSingleJson: true,
+            noWarnings: true,
+            format: 'bestaudio',
+            extractAudio: true
+        });
+
+        if (infoResult.isErr()) {
+            return infoResult;
+        }
+
+        const info = infoResult.value;
+        if (!info || typeof info !== 'object') {
+            logger.debug('Invalid video info format', { info });
+            return err({
+                type: ErrorType.Validation,
+                message: 'Could not parse video information'
+            });
+        }
+
+        // Get the audio URL from the formats
+        const audioUrl = info.url || (info.formats && info.formats[0]?.url);
+        if (!audioUrl) {
+            logger.error('No audio URL found in video info', { formats: info.formats });
+            return err({
+                type: ErrorType.Validation,
+                message: 'Could not extract audio URL'
+            });
+        }
+
+        logger.debug('Successfully fetched video info with audio URL', {
+            title: info.title,
+            duration: info.duration_string,
+            hasAudioUrl: !!audioUrl
+        });
+
+        return ok({
+            title: info.title || 'Unknown Title',
+            url: info.webpage_url || url,
+            duration: info.duration_string || '0:00',
+            thumbnail: info.thumbnail || '',
+            description: info.description,
+            views: info.view_count,
+            audioUrl: audioUrl
+        });
     }
 
     public isValidYouTubeUrl(url: string): boolean {

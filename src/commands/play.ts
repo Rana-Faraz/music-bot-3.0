@@ -44,7 +44,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
         }
 
         // Get video info first
-        const videoInfoResult = await youtubeService.getVideoInfo(url);
+        const videoInfoResult = await youtubeService.getVideoInfoWithAudio(url);
         if (videoInfoResult.isErr()) {
             await interaction.editReply({
                 content: `❌ ${videoInfoResult.error.message}`
