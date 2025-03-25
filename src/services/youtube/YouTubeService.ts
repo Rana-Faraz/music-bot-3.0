@@ -2,6 +2,7 @@ import youtubeDl from 'youtube-dl-exec';
 import { logger } from '../logger/LoggerService';
 import { AppResult, ErrorType } from '../../utils/error';
 import { err, ok } from 'neverthrow';
+import { FileCacheService } from '../cache/FileCacheService';
 
 export interface VideoInfo {
     title: string;
@@ -13,6 +14,20 @@ export interface VideoInfo {
     audioUrl?: string;
 }
 
+export interface SearchResult {
+    items: VideoInfo[];
+    totalResults: number;
+}
+
+interface YouTubeSearchEntry {
+    title: string;
+    webpage_url: string;
+    duration_string: string;
+    thumbnail: string;
+    description?: string;
+    view_count?: number;
+}
+
 interface YouTubeDlOptions {
     format?: string;
     getUrl?: boolean;
@@ -21,6 +36,9 @@ interface YouTubeDlOptions {
     dumpSingleJson?: boolean;
     addHeader?: string[];
     extractAudio?: boolean;
+    maxResults?: number;
+    flatPlaylist?: boolean;
+    yesPlaylist?: boolean;
 }
 
 const DEFAULT_HEADERS = [
@@ -30,8 +48,13 @@ const DEFAULT_HEADERS = [
 
 export class YouTubeService {
     private static instance: YouTubeService | null = null;
+    private cacheService: FileCacheService;
+    private readonly CACHE_CLEANUP_INTERVAL = 6 * 60 * 60 * 1000; // 6 hours
+    private readonly CACHE_MAX_AGE_HOURS = 24; // 24 hours
 
     private constructor() {
+        this.cacheService = FileCacheService.getInstance();
+        this.setupCacheCleanup();
         logger.debug('YouTubeService initialized');
     }
 
@@ -40,6 +63,26 @@ export class YouTubeService {
             YouTubeService.instance = new YouTubeService();
         }
         return YouTubeService.instance;
+    }
+
+    private setupCacheCleanup(): void {
+        // Clean cache on startup
+        this.cleanCache();
+        
+        // Set up periodic cleanup
+        setInterval(() => {
+            this.cleanCache();
+        }, this.CACHE_CLEANUP_INTERVAL);
+    }
+
+    private async cleanCache(): Promise<void> {
+        logger.debug('Starting cache cleanup');
+        const result = await this.cacheService.cleanOldEntries(this.CACHE_MAX_AGE_HOURS);
+        if (result.isErr()) {
+            logger.error('Failed to clean cache', result.error);
+        } else {
+            logger.debug('Cache cleanup completed');
+        }
     }
 
     private async executeYoutubeDl(url: string, options: YouTubeDlOptions): Promise<AppResult<any>> {
@@ -71,7 +114,14 @@ export class YouTubeService {
     public async getVideoInfoWithAudio(url: string): Promise<AppResult<VideoInfo>> {
         logger.debug('Fetching video info with audio URL', { url });
 
-        // First, get video info
+        // Check cache first
+        const cachedResult = await this.cacheService.get(url);
+        if (cachedResult.isOk() && cachedResult.value) {
+            logger.debug('Found video info in cache', { url });
+            return ok(cachedResult.value);
+        }
+
+        // If not in cache, fetch from YouTube
         const infoResult = await this.executeYoutubeDl(url, {
             dumpSingleJson: true,
             noWarnings: true,
@@ -102,13 +152,7 @@ export class YouTubeService {
             });
         }
 
-        logger.debug('Successfully fetched video info with audio URL', {
-            title: info.title,
-            duration: info.duration_string,
-            hasAudioUrl: !!audioUrl
-        });
-
-        return ok({
+        const videoInfo: VideoInfo = {
             title: info.title || 'Unknown Title',
             url: info.webpage_url || url,
             duration: info.duration_string || '0:00',
@@ -116,7 +160,13 @@ export class YouTubeService {
             description: info.description,
             views: info.view_count,
             audioUrl: audioUrl
-        });
+        };
+
+        // Save to cache
+        await this.cacheService.set(url, videoInfo);
+        logger.debug('Successfully cached video info', { url });
+
+        return ok(videoInfo);
     }
 
     public isValidYouTubeUrl(url: string): boolean {
@@ -124,5 +174,75 @@ export class YouTubeService {
         const isValid = youtubeRegex.test(url);
         logger.debug('Validating YouTube URL', { url, isValid });
         return isValid;
+    }
+
+    public async searchVideos(query: string, maxResults: number = 5): Promise<AppResult<SearchResult>> {
+        logger.debug('Searching for videos', { query, maxResults });
+
+        const searchUrl = `ytsearch${maxResults}:${query}`;
+        const searchResult = await this.executeYoutubeDl(searchUrl, {
+            dumpSingleJson: true,
+            noWarnings: true,
+            flatPlaylist: true,
+            yesPlaylist: true,
+        });
+
+        if (searchResult.isErr()) {
+            return searchResult;
+        }
+
+        const results = searchResult.value;
+        logger.debug("Results for search", {searchResult});
+        
+        if (!results || !results.entries || !Array.isArray(results.entries)) {
+            logger.error('Invalid search results format', { results });
+            return err({
+                type: ErrorType.Validation,
+                message: 'Could not parse search results'
+            });
+        }
+
+        const items: VideoInfo[] = results.entries.map((entry: any) => {
+            // Get the best quality thumbnail
+            const thumbnail = entry.thumbnails ? 
+                entry.thumbnails.reduce((best: any, current: any) => 
+                    (!best || current.height > best.height) ? current : best
+                ).url : '';
+
+            return {
+                title: entry.title || 'Unknown Title',
+                url: entry.url || '',
+                duration: this.formatDuration(entry.duration) || '0:00',
+                thumbnail: thumbnail,
+                description: entry.description,
+                views: entry.view_count,
+                // Don't set audioUrl here as it requires a separate request
+            };
+        });
+
+        return ok({
+            items,
+            totalResults: items.length
+        });
+    }
+
+    private formatDuration(seconds: number): string {
+        if (!seconds) return '0:00';
+        
+        const minutes = Math.floor(seconds / 60);
+        const remainingSeconds = seconds % 60;
+        
+        if (minutes >= 60) {
+            const hours = Math.floor(minutes / 60);
+            const remainingMinutes = minutes % 60;
+            return `${hours}:${remainingMinutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
+        }
+        
+        return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+    }
+
+    public async getAudioUrlForVideo(url: string): Promise<AppResult<VideoInfo>> {
+        // Reuse existing getVideoInfoWithAudio method as it already handles this functionality
+        return this.getVideoInfoWithAudio(url);
     }
 } 

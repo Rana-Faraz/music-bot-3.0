@@ -4,7 +4,7 @@
   "description": "A Discord music bot that can play music from YouTube and Spotify",
   "main": "dist/index.js",
   "scripts": {
-    "start": "node dist/index.js",
+    "start": "ts-node src/index.ts",
     "dev": "nodemon --exec ts-node src/index.ts",
     "build": "tsc",
     "lint": "eslint src --ext .ts",
@@ -26,11 +26,11 @@
     "@types/spotify-web-api-node": "^5.0.11",
     "@types/winston": "^2.4.4",
     "nodemon": "^3.1.9",
-    "ts-node": "^10.9.2",
     "typescript": "^5.8.2",
     "@types/better-queue": "^3.8.6"
   },
   "dependencies": {
+    "ts-node": "^10.9.2",
     "@discordjs/opus": "^0.10.0",
     "@discordjs/rest": "^2.4.3",
     "@discordjs/voice": "^0.18.0",

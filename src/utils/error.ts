@@ -6,7 +6,8 @@ export enum ErrorType {
     Configuration = 'CONFIGURATION_ERROR',
     Network = 'NETWORK_ERROR',
     Validation = 'VALIDATION_ERROR',
-    Unknown = 'UNKNOWN_ERROR'
+    Unknown = 'UNKNOWN_ERROR',
+    FileSystem = 'FILE_SYSTEM_ERROR'
 }
 
 export interface AppError {
