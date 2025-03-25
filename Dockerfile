@@ -1,4 +1,4 @@
-FROM node:20-alpine
+FROM node:20-bullseye
 
 # Install dependencies
 RUN apt-get update && \
@@ -9,7 +9,7 @@ RUN apt-get update && \
 WORKDIR /app
 
 # Copy package files and install dependencies
-COPY package.json package-lock.json ./
+COPY package.json ./
 RUN npm install --omit=dev
 
 # Copy the rest of the application
