@@ -2,14 +2,23 @@ import { ChatInputCommandInteraction, SlashCommandBuilder, EmbedBuilder } from '
 import { QueueService } from '../services/queue/QueueService';
 import { logger } from '../services/logger/LoggerService';
 import { ErrorType } from '../utils/error';
+import { QueuedTrack } from '../types/queue';
 
 export const data = new SlashCommandBuilder()
     .setName('queue')
-    .setDescription('Show the current music queue');
+    .setDescription('Show the current music queue')
+    .addIntegerOption(option =>
+        option
+            .setName('page')
+            .setDescription('Page number to view')
+            .setMinValue(1)
+            .setRequired(false)
+    );
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
     const queueService = QueueService.getInstance();
     const guildId = interaction.guildId;
+    const page = interaction.options.getInteger('page') || 1;
 
     if (!guildId) {
         await interaction.reply({
@@ -30,6 +39,12 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
             return;
         }
 
+        const TRACKS_PER_PAGE = 5;
+        const totalPages = Math.ceil(queue.tracks.length / TRACKS_PER_PAGE);
+        const currentPage = Math.min(page, totalPages);
+        const startIndex = (currentPage - 1) * TRACKS_PER_PAGE;
+        const endIndex = startIndex + TRACKS_PER_PAGE;
+
         const embed = new EmbedBuilder()
             .setColor('#FF0000')
             .setTitle('Music Queue 🎵')
@@ -37,32 +52,35 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 
         // Add current track
         if (queue.currentTrack) {
+            const currentTrackDuration = queue.currentTrack.info.duration;
+            const currentTrackStatus = queue.currentTrack.state.isPaused ? '⏸️ Paused' : '▶️ Playing';
+            
             embed.addFields({
                 name: 'Now Playing',
-                value: `[${queue.currentTrack.info.title}](${queue.currentTrack.info.url})\nRequested by: ${queue.currentTrack.requestedBy.user.username}\nDuration: ${queue.currentTrack.info.duration}`
+                value: `${currentTrackStatus}\n[${queue.currentTrack.info.title}](${queue.currentTrack.info.url})\nRequested by: ${queue.currentTrack.requestedBy.user.username}\nDuration: ${currentTrackDuration}`
             });
         }
 
-        // Add upcoming tracks
+        // Add upcoming tracks for current page
         if (queue.tracks.length > 0) {
-            const queueList = queue.tracks
-                .slice(0, 10) // Show only first 10 tracks
+            const pageItems = queue.tracks.slice(startIndex, endIndex);
+            const queueList = pageItems
                 .map((track, index) => 
-                    `${index + 1}. [${track.info.title}](${track.info.url})\n└ Requested by: ${track.requestedBy.user.username} | Duration: ${track.info.duration}`
+                    `${startIndex + index + 1}. [${track.info.title}](${track.info.url})\n└ Requested by: ${track.requestedBy.user.username} | Duration: ${track.info.duration}`
                 )
                 .join('\n\n');
 
-            embed.addFields({
-                name: 'Up Next',
-                value: queueList
-            });
-
-            // If there are more tracks, show a footer
-            if (queue.tracks.length > 10) {
-                embed.setFooter({
-                    text: `And ${queue.tracks.length - 10} more tracks...`
+            if (queueList) {
+                embed.addFields({
+                    name: 'Up Next',
+                    value: queueList
                 });
             }
+
+            // Add page information
+            embed.setFooter({
+                text: `Page ${currentPage}/${totalPages} • ${queue.tracks.length} track${queue.tracks.length !== 1 ? 's' : ''} in queue`
+            });
         }
 
         await interaction.reply({ embeds: [embed] });

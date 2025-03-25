@@ -74,6 +74,7 @@ export class VoiceService extends EventEmitter {
 
     public async joinChannel(member: GuildMember): Promise<AppResult<void>> {
         const voiceChannel = member.voice.channel;
+        const guildId = member.guild.id;
         
         if (!voiceChannel) {
             return err(createError(
@@ -90,27 +91,57 @@ export class VoiceService extends EventEmitter {
         }
 
         try {
+            const existingConnection = this.connections.get(guildId);
+            const existingPlayer = this.players.get(guildId);
+
+            // If we're already in this voice channel, just return
+            if (existingConnection && existingConnection.joinConfig.channelId === voiceChannel.id) {
+                logger.debug('Already in the requested voice channel', {
+                    guildId,
+                    channelId: voiceChannel.id
+                });
+                return handleAsync(Promise.resolve());
+            }
+
+            // If we're in a different channel, destroy the old connection
+            if (existingConnection) {
+                logger.debug('Moving to new voice channel', {
+                    guildId,
+                    oldChannelId: existingConnection.joinConfig.channelId,
+                    newChannelId: voiceChannel.id
+                });
+                existingConnection.destroy();
+                this.connections.delete(guildId);
+            }
+
+            // Create new connection
             const connection = joinVoiceChannel({
                 channelId: voiceChannel.id,
                 guildId: voiceChannel.guild.id,
                 adapterCreator: voiceChannel.guild.voiceAdapterCreator,
             });
 
-            this.setupConnectionHandlers(connection, voiceChannel.guild.id);
-            this.connections.set(voiceChannel.guild.id, connection);
+            this.setupConnectionHandlers(connection, guildId);
+            this.connections.set(guildId, connection);
 
             // Wait for the connection to be ready
             await entersState(connection, VoiceConnectionStatus.Ready, 5000);
 
-            // Create and set up audio player if it doesn't exist
-            if (!this.players.has(voiceChannel.guild.id)) {
+            // Reuse existing player or create a new one
+            if (!existingPlayer) {
                 const player = createAudioPlayer();
-                this.players.set(voiceChannel.guild.id, player);
-                this.setupPlayerHandlers(voiceChannel.guild.id);
-                connection.subscribe(player);
+                this.players.set(guildId, player);
+                this.setupPlayerHandlers(guildId);
             }
 
-            logger.info(`Joined voice channel in guild ${voiceChannel.guild.id}`);
+            // Subscribe the connection to the player (existing or new)
+            connection.subscribe(this.players.get(guildId)!);
+
+            logger.info(`Joined voice channel in guild ${guildId}`, {
+                channelId: voiceChannel.id,
+                wasMove: !!existingConnection
+            });
+            
             return handleAsync(Promise.resolve());
         } catch (error) {
             return err(createError(
