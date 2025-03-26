@@ -96,15 +96,10 @@ export class VoiceService extends EventEmitter {
             });
 
             if (oldState.status === AudioPlayerStatus.Playing && newState.status === AudioPlayerStatus.Idle) {
-                const track = this.getCurrentTrack(guildId);
-                if (track) {
-                    const eventData: TrackEventData = {
-                        guildId,
-                        track,
-                        timestamp: new Date()
-                    };
-                    this.emit(BotEvent.TrackEnd, eventData);
-                }
+   
+                    logger.debug("Track ended", { guildId });
+                    this.emit(BotEvent.TrackEnd, { guildId });
+                
             }
         });
 

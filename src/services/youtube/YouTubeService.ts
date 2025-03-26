@@ -264,6 +264,7 @@ export class YouTubeService {
                 thumbnail: thumbnail,
                 description: entry.description,
                 views: entry.view_count,
+                audioUrl: entry.url
                 // Don't set audioUrl here as it requires a separate request
             };
         });

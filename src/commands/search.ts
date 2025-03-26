@@ -105,19 +105,10 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
                 const index = parseInt(buttonInteraction.customId.split('_')[1]);
                 const selectedVideo = searchResult.value.items[index];
 
-                // Get audio URL for the selected video
-                const videoInfoResult = await youtubeService.getAudioUrlForVideo(selectedVideo.url);
-                if (videoInfoResult.isErr()) {
-                    await buttonInteraction.editReply({
-                        content: `❌ Failed to get audio: ${videoInfoResult.error.message}`
-                    });
-                    return;
-                }
-
                 // Update the video info with the audio URL
                 const videoWithAudio = {
                     ...selectedVideo,
-                    audioUrl: videoInfoResult.value.audioUrl
+                    audioUrl: selectedVideo.audioUrl
                 };
 
                 // Join voice channel

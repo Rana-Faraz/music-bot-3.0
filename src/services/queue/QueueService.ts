@@ -372,4 +372,35 @@ export class QueueService {
 
         return ok(mode);
     }
+
+    public async moveToFront(guildId: string, position: number): Promise<AppResult<void>> {
+        const queue = this.queues.get(guildId);
+        if (!queue) {
+            return err({
+                type: ErrorType.Validation,
+                message: 'No queue exists for this server'
+            });
+        }
+
+        if (position < 0 || position >= queue.tracks.length) {
+            return err({
+                type: ErrorType.Validation,
+                message: 'Invalid track position'
+            });
+        }
+
+        // Remove the track from its current position
+        const [track] = queue.tracks.splice(position, 1);
+        // Add it to the front of the queue
+        queue.tracks.unshift(track);
+
+        logger.debug('Moved track to front of queue', {
+            guildId,
+            track: track.info.title,
+            originalPosition: position,
+            queueLength: queue.tracks.length
+        });
+
+        return ok(undefined);
+    }
 } 

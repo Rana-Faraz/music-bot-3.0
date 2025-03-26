@@ -18,6 +18,13 @@ export enum BotEvent {
     Error = 'error'
 }
 
+export enum ButtonCustomId {
+    QueuePrevPage = 'queue_prev_page',
+    QueueNextPage = 'queue_next_page',
+    QueueRefresh = 'queue_refresh',
+    QueueSelect = 'queue_select'
+}
+
 export interface TrackEventData {
     guildId: string;
     track: QueuedTrack;
