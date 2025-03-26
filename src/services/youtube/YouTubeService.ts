@@ -19,15 +19,6 @@ export interface SearchResult {
     totalResults: number;
 }
 
-interface YouTubeSearchEntry {
-    title: string;
-    webpage_url: string;
-    duration_string: string;
-    thumbnail: string;
-    description?: string;
-    view_count?: number;
-}
-
 interface YouTubeDlOptions {
     format?: string;
     getUrl?: boolean;
@@ -43,14 +34,24 @@ interface YouTubeDlOptions {
 
 const DEFAULT_HEADERS = [
     'referer:youtube.com',
-    'user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    'user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'accept:text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+    'accept-language:en-US,en;q=0.9',
+    'sec-ch-ua:"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+    'sec-ch-ua-mobile:?0',
+    'sec-ch-ua-platform:"Windows"',
+    'sec-fetch-dest:document',
+    'sec-fetch-mode:navigate',
+    'sec-fetch-site:none',
+    'sec-fetch-user:?1',
+    'upgrade-insecure-requests:1'
 ];
 
 export class YouTubeService {
     private static instance: YouTubeService | null = null;
     private cacheService: FileCacheService;
     private readonly CACHE_CLEANUP_INTERVAL = 6 * 60 * 60 * 1000; // 6 hours
-    private readonly CACHE_MAX_AGE_HOURS = 24; // 24 hours
+    private readonly CACHE_MAX_AGE_HOURS = 6; // 6 hours
 
     private constructor() {
         this.cacheService = FileCacheService.getInstance();
@@ -192,7 +193,6 @@ export class YouTubeService {
         }
 
         const results = searchResult.value;
-        logger.debug("Results for search", {searchResult});
         
         if (!results || !results.entries || !Array.isArray(results.entries)) {
             logger.error('Invalid search results format', { results });

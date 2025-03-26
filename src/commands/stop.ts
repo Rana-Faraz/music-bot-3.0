@@ -2,6 +2,7 @@ import { ChatInputCommandInteraction, SlashCommandBuilder } from 'discord.js';
 import { VoiceService } from '../services/voice/VoiceService';
 import { logger } from '../services/logger/LoggerService';
 import { ErrorType } from '../utils/error';
+import { QueueService } from '../services/queue/QueueService';
 
 export const data = new SlashCommandBuilder()
     .setName('stop')
@@ -9,6 +10,7 @@ export const data = new SlashCommandBuilder()
 
 export async function execute(interaction: ChatInputCommandInteraction): Promise<void> {
     const voiceService = VoiceService.getInstance();
+    const queueService = QueueService.getInstance();
     const guildId = interaction.guildId;
 
     if (!guildId) {
@@ -21,7 +23,13 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 
     try {
         await interaction.deferReply();
+        
+        // Clear the queue first
+        queueService.clearQueue(guildId);
+        
+        // Then leave the channel
         await voiceService.leaveChannel(guildId);
+        
         await interaction.editReply({
             content: '⏹️ Stopped playing and left the voice channel'
         });

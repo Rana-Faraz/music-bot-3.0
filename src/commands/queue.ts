@@ -57,7 +57,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
             
             embed.addFields({
                 name: 'Now Playing',
-                value: `${currentTrackStatus}\n[${queue.currentTrack.info.title}](${queue.currentTrack.info.url})\nRequested by: ${queue.currentTrack.requestedBy.user.username}\nDuration: ${currentTrackDuration}`
+                value: `${currentTrackStatus}\n[${queue.currentTrack.info.title}](${queue.currentTrack.info.url})\nRequested by: ${queue.currentTrack.requestedBy.displayName}\nDuration: ${currentTrackDuration}`
             });
         }
 
@@ -66,7 +66,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
             const pageItems = queue.tracks.slice(startIndex, endIndex);
             const queueList = pageItems
                 .map((track, index) => 
-                    `${startIndex + index + 1}. [${track.info.title}](${track.info.url})\n└ Requested by: ${track.requestedBy.user.username} | Duration: ${track.info.duration}`
+                    `${startIndex + index + 1}. [${track.info.title}](${track.info.url})\n└ Requested by: ${track.requestedBy.displayName} | Duration: ${track.info.duration}`
                 )
                 .join('\n\n');
 

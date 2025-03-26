@@ -14,7 +14,7 @@ import { logger } from '../logger/LoggerService';
 import { AppResult, ErrorType, handleAsync, createError } from '../../utils/error';
 import { err, ok } from 'neverthrow';
 import { EventEmitter } from 'events';
-import { YouTubeService, VideoInfo } from '../youtube/YouTubeService';
+import { QueueService } from '../queue/QueueService';
 
 
 export class VoiceService extends EventEmitter {
@@ -210,11 +210,16 @@ export class VoiceService extends EventEmitter {
     public async leaveChannel(guildId: string): Promise<void> {
         const connection = this.connections.get(guildId);
         if (connection) {
+            // Clear the queue first
+            const queueService = QueueService.getInstance();
+            queueService.clearQueue(guildId);
+            
+            // Then stop playback and leave
             this.stopPlayback(guildId);
             connection.destroy();
             this.connections.delete(guildId);
             this.players.delete(guildId);
-            logger.debug('Left voice channel', { guildId });
+            logger.debug('Left voice channel and cleared queue', { guildId });
         }
     }
 
