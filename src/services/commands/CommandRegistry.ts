@@ -1,7 +1,7 @@
 import { Client, Collection, REST, Routes, ChatInputCommandInteraction } from 'discord.js';
 import { Command, CommandRegistryOptions } from '../../types/command';
 import { logger } from '../logger/LoggerService';
-import { AppResult, ErrorType, handleAsync } from '../../utils/error';
+import { AppResult, ErrorType, handleAsync } from '../../types/error';
 import fs from 'fs/promises';
 import path from 'path';
 

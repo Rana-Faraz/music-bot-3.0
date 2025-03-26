@@ -1,6 +1,6 @@
 import { DiscordClientService } from './services/discord/DiscordClientService';
 import { logger } from './services/logger/LoggerService';
-import { ErrorType } from './utils/error';
+import { ErrorType } from './types/error';
 
 async function bootstrap() {
     try {

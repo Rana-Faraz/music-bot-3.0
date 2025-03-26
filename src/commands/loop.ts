@@ -2,7 +2,7 @@ import { SlashCommandBuilder } from '@discordjs/builders';
 import { CommandInteraction, EmbedBuilder, CacheType } from 'discord.js';
 import { QueueService } from '../services/queue/QueueService';
 import { LoopMode } from '../types/queue';
-import { ErrorType } from '../utils/error';
+import { ErrorType } from '../types/error';
 import { logger } from '../services/logger/LoggerService';
 
 export const data = new SlashCommandBuilder()

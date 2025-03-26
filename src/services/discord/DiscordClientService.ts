@@ -1,8 +1,7 @@
 import { Client, ClientOptions, Collection, GatewayIntentBits, Events, Interaction } from 'discord.js';
 import { config } from '../../config';
 import { logger } from '../logger/LoggerService';
-import { AppResult, ErrorType, handleAsync } from '../../utils/error';
-import { err } from 'neverthrow';
+import { AppResult, ErrorType, handleAsync } from '../../types/error';
 import { CommandRegistry } from '../commands/CommandRegistry';
 import path from 'path';
 

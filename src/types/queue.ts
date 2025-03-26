@@ -1,4 +1,4 @@
-import { VideoInfo } from '../services/youtube/YouTubeService';
+import { VideoInfo } from '../types/youtube';
 import { GuildMember } from 'discord.js';
 
 export enum LoopMode {

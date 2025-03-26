@@ -1,11 +1,12 @@
 import { GuildMember } from 'discord.js';
-import { VideoInfo } from '../youtube/YouTubeService';
+import { VideoInfo } from '../../types/youtube';
 import { GuildQueue, QueuedTrack } from '../../types/queue';
 import { logger } from '../logger/LoggerService';
-import { AppResult, ErrorType } from '../../utils/error';
+import { AppResult, ErrorType } from '../../types/error';
 import { err, ok } from 'neverthrow';
 import { VoiceService } from '../voice/VoiceService';
 import { LoopMode } from '../../types/queue';
+import { BotEvent } from '../../types/events';
 
 export class QueueService {
     private static instance: QueueService;
@@ -21,33 +22,33 @@ export class QueueService {
     }
 
     private setupVoiceServiceHandlers(): void {
-        this.voiceService.on('connectionDisconnected', (guildId: string) => {
+        this.voiceService.on(BotEvent.ConnectionDisconnected, ({guildId}: {guildId: string}) => {
             logger.debug(`Voice connection disconnected for guild ${guildId}`);
             this.clearQueue(guildId);
         });
 
-        this.voiceService.on('beforeDisconnect', (guildId: string) => {
+        this.voiceService.on(BotEvent.BeforeDisconnect, ({guildId}: {guildId: string}) => {
             logger.debug(`Voice service is about to disconnect for guild ${guildId}`);
             this.clearQueue(guildId);
         });
 
-        this.voiceService.on('trackStart', (guildId: string) => {
+        this.voiceService.on(BotEvent.TrackStart, ({guildId}: {guildId: string}) => {
             this.handleTrackStart(guildId);
         });
 
-        this.voiceService.on('trackEnd', (guildId: string) => {
+        this.voiceService.on(BotEvent.TrackEnd, ({guildId}: {guildId: string}) => {
             this.handleTrackEnd(guildId, false);
         });
 
-        this.voiceService.on('trackPause', (guildId: string) => {
+        this.voiceService.on(BotEvent.TrackPause, ({guildId}: {guildId: string}) => {
             this.handleTrackPause(guildId);
         });
 
-        this.voiceService.on('trackResume', (guildId: string) => {
+        this.voiceService.on(BotEvent.TrackResume, ({guildId}: {guildId: string}) => {
             this.handleTrackResume(guildId);
         });
 
-        this.voiceService.on('trackError', (guildId: string, error: Error) => {
+        this.voiceService.on(BotEvent.TrackError, ({guildId, error}: {guildId: string, error: Error}) => {
             logger.error('Track playback error', { guildId, error });
             this.handleTrackEnd(guildId, true);
         });

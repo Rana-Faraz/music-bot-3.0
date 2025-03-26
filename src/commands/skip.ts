@@ -1,7 +1,7 @@
 import { ChatInputCommandInteraction, SlashCommandBuilder, EmbedBuilder } from 'discord.js';
 import { QueueService } from '../services/queue/QueueService';
 import { logger } from '../services/logger/LoggerService';
-import { ErrorType } from '../utils/error';
+import { ErrorType } from '../types/error';
 
 export const data = new SlashCommandBuilder()
     .setName('skip')

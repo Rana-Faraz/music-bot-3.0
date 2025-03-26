@@ -1,7 +1,7 @@
 import { ChatInputCommandInteraction, SlashCommandBuilder } from 'discord.js';
 import { VoiceService } from '../services/voice/VoiceService';
 import { logger } from '../services/logger/LoggerService';
-import { ErrorType } from '../utils/error';
+import { ErrorType } from '../types/error';
 import { QueueService } from '../services/queue/QueueService';
 
 export const data = new SlashCommandBuilder()

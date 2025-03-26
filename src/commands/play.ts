@@ -3,7 +3,7 @@ import { VoiceService } from '../services/voice/VoiceService';
 import { QueueService } from '../services/queue/QueueService';
 import { YouTubeService } from '../services/youtube/YouTubeService';
 import { logger } from '../services/logger/LoggerService';
-import { ErrorType } from '../utils/error';
+import { ErrorType } from '../types/error';
 
 export const data = new SlashCommandBuilder()
     .setName('play')

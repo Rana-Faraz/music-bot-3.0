@@ -1,36 +1,16 @@
 import youtubeDl from 'youtube-dl-exec';
 import { logger } from '../logger/LoggerService';
-import { AppResult, ErrorType } from '../../utils/error';
+import { AppResult, ErrorType, YouTubeError } from '../../types/error';
 import { err, ok } from 'neverthrow';
 import { FileCacheService } from '../cache/FileCacheService';
-
-export interface VideoInfo {
-    title: string;
-    url: string;
-    duration: string;
-    thumbnail: string;
-    description?: string;
-    views?: number;
-    audioUrl?: string;
-}
-
-export interface SearchResult {
-    items: VideoInfo[];
-    totalResults: number;
-}
-
-interface YouTubeDlOptions {
-    format?: string;
-    getUrl?: boolean;
-    noWarnings?: boolean;
-    preferFreeFormats?: boolean;
-    dumpSingleJson?: boolean;
-    addHeader?: string[];
-    extractAudio?: boolean;
-    maxResults?: number;
-    flatPlaylist?: boolean;
-    yesPlaylist?: boolean;
-}
+import { 
+    VideoInfo, 
+    SearchResult, 
+    YouTubeDlOptions, 
+    PlaylistInfo, 
+    PlaylistEntry 
+} from '../../types/youtube';
+import { YouTubeServiceState } from '../../types/services';
 
 const DEFAULT_HEADERS = [
     'referer:youtube.com',
@@ -98,18 +78,27 @@ export class YouTubeService {
             logger.debug('youtube-dl execution successful', { resultType: typeof result });
             return ok(result);
         } catch (error) {
-            logger.error('Error executing youtube-dl', error, {
-                url,
-                options,
-                errorType: ErrorType.Network,
-                errorMessage: error instanceof Error ? error.message : 'Unknown error'
-            });
-            return err({
-                type: ErrorType.Network,
+            const youtubeError: YouTubeError = {
+                type: ErrorType.YouTube,
                 message: 'Failed to execute youtube-dl',
-                originalError: error
-            });
+                originalError: error,
+                videoId: this.extractVideoId(url),
+                playlistId: this.extractPlaylistId(url)
+            };
+            
+            logger.error('Error executing youtube-dl', youtubeError);
+            return err(youtubeError);
         }
+    }
+
+    private extractVideoId(url: string): string | undefined {
+        const match = url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([^?&]+)/);
+        return match?.[1];
+    }
+
+    private extractPlaylistId(url: string): string | undefined {
+        const match = url.match(/[&?]list=([^&]+)/i);
+        return match?.[1];
     }
 
     public async getVideoInfoWithAudio(url: string): Promise<AppResult<VideoInfo>> {

@@ -1,9 +1,9 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { logger } from '../logger/LoggerService';
-import { AppResult, ErrorType } from '../../utils/error';
+import { AppResult, ErrorType } from '../../types/error';
 import { err, ok } from 'neverthrow';
-import { VideoInfo } from '../youtube/YouTubeService';
+import { VideoInfo } from '../../types/youtube';
 
 interface CacheEntry {
     data: VideoInfo;

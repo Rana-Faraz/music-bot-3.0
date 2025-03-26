@@ -4,7 +4,7 @@ import {
     EmbedBuilder
 } from 'discord.js';
 import { logger } from '../services/logger/LoggerService';
-import { ErrorType } from '../utils/error';
+import { ErrorType } from '../types/error';
 
 // Define option choice type
 interface CommandOptionChoice {

@@ -11,20 +11,36 @@ import {
 } from '@discordjs/voice';
 import { GuildMember, VoiceChannel, StageChannel } from 'discord.js';
 import { logger } from '../logger/LoggerService';
-import { AppResult, ErrorType, handleAsync, createError } from '../../utils/error';
+import { 
+    AppResult, 
+    ErrorType, 
+    DiscordError, 
+    createError, 
+    handleAsync 
+} from '../../types/error';
 import { err, ok } from 'neverthrow';
 import { EventEmitter } from 'events';
-import { YouTubeService, VideoInfo } from '../youtube/YouTubeService';
+import { VideoInfo } from '../../types/youtube';
+import { VoiceServiceState, VoiceServiceEvents } from '../../types/services';
+import { 
+    TrackEventData, 
+    TrackErrorEventData, 
+    ConnectionEventData,
+    BotEvent 
+} from '../../types/events';
+import { YouTubeService } from '../youtube/YouTubeService';
+import { QueuedTrack } from '../../types/queue';
 
 export class VoiceService extends EventEmitter {
     private static instance: VoiceService;
-    private connections: Map<string, VoiceConnection>;
-    private players: Map<string, AudioPlayer>;
+    private state: VoiceServiceState;
 
     private constructor() {
         super();
-        this.connections = new Map();
-        this.players = new Map();
+        this.state = {
+            connections: new Map(),
+            players: new Map()
+        };
         logger.debug('VoiceService initialized');
     }
 
@@ -33,6 +49,14 @@ export class VoiceService extends EventEmitter {
             VoiceService.instance = new VoiceService();
         }
         return VoiceService.instance;
+    }
+
+    private createEventData(guildId: string, channelId: string | null | undefined): ConnectionEventData {
+        return {
+            guildId,
+            channelId: channelId ?? '',
+            timestamp: new Date()
+        };
     }
 
     private setupConnectionHandlers(connection: VoiceConnection, guildId: string): void {
@@ -44,16 +68,24 @@ export class VoiceService extends EventEmitter {
 
         connection.on(VoiceConnectionStatus.Disconnected, () => {
             logger.debug(`Voice connection disconnected for guild ${guildId}`);
-            this.emit('connectionDisconnected', guildId);
+            this.emit(BotEvent.ConnectionDisconnected, this.createEventData(guildId, connection.joinConfig.channelId));
         });
 
         connection.on('error', (error) => {
-            logger.error(`Voice connection error in guild ${guildId}`, error);
+            const discordError: DiscordError = {
+                type: ErrorType.Discord,
+                message: 'Voice connection error',
+                originalError: error,
+                guildId,
+                channelId: connection.joinConfig.channelId
+            };
+            logger.error(`Voice connection error in guild ${guildId}`, discordError);
+            this.emit(BotEvent.Error, discordError);
         });
     }
 
     private setupPlayerHandlers(guildId: string): void {
-        const player = this.players.get(guildId);
+        const player = this.state.players.get(guildId);
         if (!player) return;
 
         player.on('stateChange', (oldState, newState) => {
@@ -64,13 +96,34 @@ export class VoiceService extends EventEmitter {
             });
 
             if (oldState.status === AudioPlayerStatus.Playing && newState.status === AudioPlayerStatus.Idle) {
-                this.emit('trackEnd', guildId);
+                const track = this.getCurrentTrack(guildId);
+                if (track) {
+                    const eventData: TrackEventData = {
+                        guildId,
+                        track,
+                        timestamp: new Date()
+                    };
+                    this.emit(BotEvent.TrackEnd, eventData);
+                }
             }
         });
 
         player.on('error', (error) => {
             logger.error('Player error', { guildId, error });
-            this.emit('trackError', guildId, error);
+            const track = this.getCurrentTrack(guildId);
+            if (track) {
+                const eventData: TrackErrorEventData = {
+                    guildId,
+                    track,
+                    timestamp: new Date(),
+                    error: {
+                        type: ErrorType.Discord,
+                        message: 'Audio player error',
+                        originalError: error
+                    }
+                };
+                this.emit(BotEvent.TrackError, eventData);
+            }
         });
     }
 
@@ -93,8 +146,8 @@ export class VoiceService extends EventEmitter {
         }
 
         try {
-            const existingConnection = this.connections.get(guildId);
-            const existingPlayer = this.players.get(guildId);
+            const existingConnection = this.state.connections.get(guildId);
+            const existingPlayer = this.state.players.get(guildId);
 
             // If we're already in this voice channel, just return
             if (existingConnection && existingConnection.joinConfig.channelId === voiceChannel.id) {
@@ -102,7 +155,7 @@ export class VoiceService extends EventEmitter {
                     guildId,
                     channelId: voiceChannel.id
                 });
-                return handleAsync(Promise.resolve());
+                return ok(undefined);
             }
 
             // If we're in a different channel, destroy the old connection
@@ -113,7 +166,7 @@ export class VoiceService extends EventEmitter {
                     newChannelId: voiceChannel.id
                 });
                 existingConnection.destroy();
-                this.connections.delete(guildId);
+                this.state.connections.delete(guildId);
             }
 
             // Create new connection
@@ -124,7 +177,7 @@ export class VoiceService extends EventEmitter {
             });
 
             this.setupConnectionHandlers(connection, guildId);
-            this.connections.set(guildId, connection);
+            this.state.connections.set(guildId, connection);
 
             // Wait for the connection to be ready
             await entersState(connection, VoiceConnectionStatus.Ready, 5000);
@@ -132,19 +185,19 @@ export class VoiceService extends EventEmitter {
             // Reuse existing player or create a new one
             if (!existingPlayer) {
                 const player = createAudioPlayer();
-                this.players.set(guildId, player);
+                this.state.players.set(guildId, player);
                 this.setupPlayerHandlers(guildId);
             }
 
             // Subscribe the connection to the player (existing or new)
-            connection.subscribe(this.players.get(guildId)!);
+            connection.subscribe(this.state.players.get(guildId)!);
 
             logger.info(`Joined voice channel in guild ${guildId}`, {
                 channelId: voiceChannel.id,
                 wasMove: !!existingConnection
             });
             
-            return handleAsync(Promise.resolve());
+            return ok(undefined);
         } catch (error) {
             logger.error('Error joining voice channel', { error });
             return err(createError(
@@ -160,8 +213,8 @@ export class VoiceService extends EventEmitter {
         url: string,
         videoInfo?: VideoInfo
     ): Promise<AppResult<void>> {
-        const connection = this.connections.get(guildId);
-        const player = this.players.get(guildId);
+        const connection = this.state.connections.get(guildId);
+        const player = this.state.players.get(guildId);
 
         if (!connection || !player) {
             return err(createError(
@@ -207,7 +260,7 @@ export class VoiceService extends EventEmitter {
 
             logger.info(`Started playing YouTube audio in guild ${guildId}`);
 
-            this.emit('trackStart', guildId);
+            this.emit(BotEvent.TrackStart, this.createEventData(guildId, connection.joinConfig.channelId));
 
             return ok(undefined);
         } catch (error) {
@@ -220,7 +273,7 @@ export class VoiceService extends EventEmitter {
     }
 
     public stopPlayback(guildId: string): void {
-        const player = this.players.get(guildId);
+        const player = this.state.players.get(guildId);
         if (player) {
             player.stop();
             logger.debug('Stopped playback', { guildId });
@@ -228,36 +281,44 @@ export class VoiceService extends EventEmitter {
     }
 
     public async leaveChannel(guildId: string): Promise<void> {
-        const connection = this.connections.get(guildId);
+        const connection = this.state.connections.get(guildId);
         if (connection) {
             // Emit event before leaving
-            this.emit('beforeDisconnect', guildId);
+            this.emit(BotEvent.BeforeDisconnect, this.createEventData(guildId, connection.joinConfig.channelId));
             
             // Stop playback and leave
             this.stopPlayback(guildId);
             connection.destroy();
-            this.connections.delete(guildId);
-            this.players.delete(guildId);
+            this.state.connections.delete(guildId);
+            this.state.players.delete(guildId);
             
             // Emit event after leaving
-            this.emit('afterDisconnect', guildId);
+            this.emit(BotEvent.AfterDisconnect, this.createEventData(guildId, connection.joinConfig.channelId));
             logger.debug('Left voice channel', { guildId });
         }
     }
 
     public pausePlayback(guildId: string): void {
-        const player = this.players.get(guildId);
+        const player = this.state.players.get(guildId);
         if (player) {
             player.pause();
-            this.emit('trackPause', guildId);
+            const connection = this.state.connections.get(guildId);
+            this.emit(BotEvent.TrackPause, this.createEventData(guildId, connection?.joinConfig.channelId));
         }
     }
 
     public resumePlayback(guildId: string): void {
-        const player = this.players.get(guildId);
+        const player = this.state.players.get(guildId);
         if (player) {
             player.unpause();
-            this.emit('trackResume', guildId);
+            const connection = this.state.connections.get(guildId);
+            this.emit(BotEvent.TrackResume, this.createEventData(guildId, connection?.joinConfig.channelId));
         }
+    }
+
+    private getCurrentTrack(guildId: string): QueuedTrack | null {
+        // This is a placeholder - you'll need to implement this method
+        // by either storing the current track in the state or getting it from the QueueService
+        return null;
     }
 }
