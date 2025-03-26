@@ -26,6 +26,11 @@ export class QueueService {
             this.clearQueue(guildId);
         });
 
+        this.voiceService.on('beforeDisconnect', (guildId: string) => {
+            logger.debug(`Voice service is about to disconnect for guild ${guildId}`);
+            this.clearQueue(guildId);
+        });
+
         this.voiceService.on('trackStart', (guildId: string) => {
             this.handleTrackStart(guildId);
         });

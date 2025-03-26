@@ -177,6 +177,65 @@ export class YouTubeService {
         return isValid;
     }
 
+    public isPlaylistUrl(url: string): boolean {
+        return url.includes('list=');
+    }
+
+    public async getPlaylistVideos(url: string): Promise<AppResult<VideoInfo[]>> {
+        logger.debug('Fetching playlist videos', { url });
+
+        try {
+            const playlistResult = await this.executeYoutubeDl(url, {
+                dumpSingleJson: true,
+                noWarnings: true,
+                flatPlaylist: true,
+                yesPlaylist: true
+            });
+
+            if (playlistResult.isErr()) {
+                return playlistResult;
+            }
+
+            const playlist = playlistResult.value;
+            
+            if (!playlist || !playlist.entries || !Array.isArray(playlist.entries)) {
+                logger.error('Invalid playlist format', { playlist });
+                return err({
+                    type: ErrorType.Validation,
+                    message: 'Could not parse playlist information'
+                });
+            }
+
+            const videos: VideoInfo[] = playlist.entries.map((entry: any) => {
+                // Get the best quality thumbnail
+                const thumbnail = entry.thumbnails ? 
+                    entry.thumbnails.reduce((best: any, current: any) => 
+                        (!best || current.height > best.height) ? current : best
+                    ).url : '';
+
+                return {
+                    title: entry.title || 'Unknown Title',
+                    url: entry.webpage_url || entry.url || '',
+                    duration: entry.duration_string || this.formatDuration(entry.duration) || '0:00',
+                    thumbnail: thumbnail,
+                    description: entry.description,
+                    views: entry.view_count
+                    // Don't fetch audioUrl here - it will be fetched when needed
+                };
+            });
+
+            logger.info(`Successfully extracted ${videos.length} videos from playlist`, { url });
+            return ok(videos);
+        } catch (error) {
+            logger.error('Error fetching playlist', error);
+            return err({
+                type: ErrorType.Network,
+                message: 'Failed to fetch playlist information',
+                originalError: error
+            });
+        }
+    }
+
     public async searchVideos(query: string, maxResults: number = 5): Promise<AppResult<SearchResult>> {
         logger.debug('Searching for videos', { query, maxResults });
 
@@ -242,7 +301,54 @@ export class YouTubeService {
     }
 
     public async getAudioUrlForVideo(url: string): Promise<AppResult<VideoInfo>> {
-        // Reuse existing getVideoInfoWithAudio method as it already handles this functionality
-        return this.getVideoInfoWithAudio(url);
+        logger.debug('Fetching audio URL for video', { url });
+        
+        try {
+            const result = await this.executeYoutubeDl(url, {
+                dumpSingleJson: true,
+                noWarnings: true,
+                format: 'bestaudio',
+                extractAudio: true
+            });
+
+            if (result.isErr()) {
+                return result;
+            }
+
+            const info = result.value;
+            if (!info || typeof info !== 'object') {
+                return err({
+                    type: ErrorType.Validation,
+                    message: 'Could not parse video information'
+                });
+            }
+
+            const audioUrl = info.url || (info.formats && info.formats[0]?.url);
+            if (!audioUrl) {
+                return err({
+                    type: ErrorType.Validation,
+                    message: 'Could not extract audio URL'
+                });
+            }
+
+            const videoInfo: VideoInfo = {
+                title: info.title || 'Unknown Title',
+                url: info.webpage_url || url,
+                duration: info.duration_string || this.formatDuration(info.duration) || '0:00',
+                thumbnail: info.thumbnail || '',
+                description: info.description,
+                views: info.view_count,
+                audioUrl: audioUrl
+            };
+
+            return ok(videoInfo);
+        } catch (error) {
+            logger.error('Error getting audio URL', error);
+            return err({
+                type: ErrorType.Network,
+                message: 'Failed to get audio URL',
+                originalError: error
+            });
+        }
     }
 } 

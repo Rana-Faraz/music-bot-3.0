@@ -14,8 +14,7 @@ import { logger } from '../logger/LoggerService';
 import { AppResult, ErrorType, handleAsync, createError } from '../../utils/error';
 import { err, ok } from 'neverthrow';
 import { EventEmitter } from 'events';
-import { QueueService } from '../queue/QueueService';
-
+import { YouTubeService, VideoInfo } from '../youtube/YouTubeService';
 
 export class VoiceService extends EventEmitter {
     private static instance: VoiceService;
@@ -158,8 +157,9 @@ export class VoiceService extends EventEmitter {
 
     public async playYouTubeAudio(
         guildId: string, 
-        url: string
-    ) {
+        url: string,
+        videoInfo?: VideoInfo
+    ): Promise<AppResult<void>> {
         const connection = this.connections.get(guildId);
         const player = this.players.get(guildId);
 
@@ -170,13 +170,33 @@ export class VoiceService extends EventEmitter {
             ));
         }
 
-
         try {
-            // Get video info and audio URL in one call
+            let audioUrl: string;
+            
+            // If we have videoInfo with audioUrl, use it
+            if (videoInfo?.audioUrl) {
+                audioUrl = videoInfo.audioUrl;
+            } else {
+                // Otherwise fetch the audio URL
+                const youtubeService = YouTubeService.getInstance();
+                const result = await youtubeService.getAudioUrlForVideo(url);
+                
+                if (result.isErr()) {
+                    return err(result.error);
+                }
+                
+                audioUrl = result.value.audioUrl || '';
+            }
 
+            if (!audioUrl) {
+                return err(createError(
+                    ErrorType.Validation,
+                    'Could not get audio URL for this video'
+                ));
+            }
 
-            // Create and play audio resource using the audio URL from video info
-            const resource = createAudioResource(url, {
+            // Create and play audio resource
+            const resource = createAudioResource(audioUrl, {
                 inputType: StreamType.Arbitrary,
             });
 
@@ -210,16 +230,18 @@ export class VoiceService extends EventEmitter {
     public async leaveChannel(guildId: string): Promise<void> {
         const connection = this.connections.get(guildId);
         if (connection) {
-            // Clear the queue first
-            const queueService = QueueService.getInstance();
-            queueService.clearQueue(guildId);
+            // Emit event before leaving
+            this.emit('beforeDisconnect', guildId);
             
-            // Then stop playback and leave
+            // Stop playback and leave
             this.stopPlayback(guildId);
             connection.destroy();
             this.connections.delete(guildId);
             this.players.delete(guildId);
-            logger.debug('Left voice channel and cleared queue', { guildId });
+            
+            // Emit event after leaving
+            this.emit('afterDisconnect', guildId);
+            logger.debug('Left voice channel', { guildId });
         }
     }
 

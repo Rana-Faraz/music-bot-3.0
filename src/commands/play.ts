@@ -7,11 +7,11 @@ import { ErrorType } from '../utils/error';
 
 export const data = new SlashCommandBuilder()
     .setName('play')
-    .setDescription('Play audio from a YouTube URL')
+    .setDescription('Play audio from a YouTube URL or playlist')
     .addStringOption(option =>
         option
             .setName('url')
-            .setDescription('The YouTube URL to play')
+            .setDescription('The YouTube URL or playlist URL to play')
             .setRequired(true)
     );
 
@@ -43,20 +43,60 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
             return;
         }
 
-        // Get video info first
-        const videoInfoResult = await youtubeService.getVideoInfoWithAudio(url);
-        if (videoInfoResult.isErr()) {
-            await interaction.editReply({
-                content: `❌ ${videoInfoResult.error.message}`
-            });
-            return;
-        }
-
         // Join the voice channel if not already in one
         const joinResult = await voiceService.joinChannel(interaction.member as any);
         if (joinResult.isErr()) {
             await interaction.editReply({
                 content: `❌ ${joinResult.error.message}`
+            });
+            return;
+        }
+
+        // Handle playlists differently
+        if (youtubeService.isPlaylistUrl(url)) {
+            const playlistResult = await youtubeService.getPlaylistVideos(url);
+            if (playlistResult.isErr()) {
+                await interaction.editReply({
+                    content: `❌ Failed to load playlist: ${playlistResult.error.message}`
+                });
+                return;
+            }
+
+            const videos = playlistResult.value;
+            let addedCount = 0;
+
+            // Add each video to the queue
+            for (const video of videos) {
+                const queueResult = await queueService.addToQueue(
+                    guildId,
+                    video,
+                    interaction.member as any
+                );
+
+                if (queueResult.isOk()) {
+                    addedCount++;
+                }
+            }
+
+            const embed = new EmbedBuilder()
+                .setColor('#FF0000')
+                .setTitle('Playlist Added to Queue 📝')
+                .setDescription(`Successfully added ${addedCount} tracks to the queue`)
+                .addFields(
+                    { name: 'Requested by', value: interaction.member?.user.username || 'Unknown', inline: true },
+                    { name: 'Tracks Added', value: addedCount.toString(), inline: true }
+                )
+                .setTimestamp();
+
+            await interaction.editReply({ embeds: [embed] });
+            return;
+        }
+
+        // Handle single video
+        const videoInfoResult = await youtubeService.getVideoInfoWithAudio(url);
+        if (videoInfoResult.isErr()) {
+            await interaction.editReply({
+                content: `❌ ${videoInfoResult.error.message}`
             });
             return;
         }
