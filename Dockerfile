@@ -15,9 +15,6 @@ RUN npm install --omit=dev
 # Copy the rest of the application
 COPY . .
 
-# Build the TypeScript code
-RUN npm run build
-
 # Expose necessary ports (if applicable)
 EXPOSE 3000
 
