@@ -22,16 +22,22 @@ export class QueueService {
     }
 
     private setupVoiceServiceHandlers(): void {
-        this.voiceService.on(BotEvent.ConnectionDisconnected, ({guildId}: {guildId: string}) => {
-            logger.debug(`Voice connection disconnected for guild ${guildId}`);
-            this.clearQueue(guildId);
-        });
-
+        // Handle voice connection destroyed/disconnected
         this.voiceService.on(BotEvent.BeforeDisconnect, ({guildId}: {guildId: string}) => {
             logger.debug(`Voice service is about to disconnect for guild ${guildId}`);
-            this.clearQueue(guildId);
+            const queue = this.queues.get(guildId);
+            if (queue) {
+                queue.isPlaying = false;
+                queue.currentTrack = null;
+            }
         });
 
+        this.voiceService.on(BotEvent.AfterDisconnect, ({guildId}: {guildId: string}) => {
+            logger.debug(`Voice service disconnected for guild ${guildId}`);
+            this.queues.delete(guildId);
+        });
+
+        // Handle track events
         this.voiceService.on(BotEvent.TrackStart, ({guildId}: {guildId: string}) => {
             this.handleTrackStart(guildId);
         });
@@ -40,17 +46,30 @@ export class QueueService {
             this.handleTrackEnd(guildId, false);
         });
 
-        this.voiceService.on(BotEvent.TrackPause, ({guildId}: {guildId: string}) => {
-            this.handleTrackPause(guildId);
-        });
-
-        this.voiceService.on(BotEvent.TrackResume, ({guildId}: {guildId: string}) => {
-            this.handleTrackResume(guildId);
-        });
-
         this.voiceService.on(BotEvent.TrackError, ({guildId, error}: {guildId: string, error: Error}) => {
             logger.error('Track playback error', { guildId, error });
             this.handleTrackEnd(guildId, true);
+        });
+
+        this.voiceService.on(BotEvent.TrackPause, ({guildId}: {guildId: string}) => {
+            const queue = this.getQueue(guildId);
+            if (queue?.currentTrack) {
+                queue.currentTrack.state.pausedAt = new Date();
+                queue.currentTrack.state.isPaused = true;
+            }
+        });
+
+        this.voiceService.on(BotEvent.TrackResume, ({guildId}: {guildId: string}) => {
+            const queue = this.getQueue(guildId);
+            if (queue?.currentTrack) {
+                const track = queue.currentTrack;
+                if (track.state.pausedAt) {
+                    const pauseDuration = new Date().getTime() - track.state.pausedAt.getTime();
+                    track.state.totalPausedDuration += pauseDuration;
+                }
+                track.state.pausedAt = null;
+                track.state.isPaused = false;
+            }
         });
     }
 
@@ -339,10 +358,7 @@ export class QueueService {
             tracksCleared: queue.tracks.length
         });
 
-        this.voiceService.stopPlayback(guildId);
         this.voiceService.leaveChannel(guildId);
-        this.queues.delete(guildId);
-
         return ok(undefined);
     }
 

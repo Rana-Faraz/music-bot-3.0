@@ -64,11 +64,33 @@ export class VoiceService extends EventEmitter {
             logger.debug(`Voice connection state changed for guild ${guildId}`, {
                 state: newState.status
             });
+
+            if (newState.status === VoiceConnectionStatus.Destroyed) {
+                // Clean up when connection is destroyed
+                this.state.connections.delete(guildId);
+                const player = this.state.players.get(guildId);
+                if (player) {
+                    player.stop();
+                    this.state.players.delete(guildId);
+                }
+                this.emit(BotEvent.AfterDisconnect, this.createEventData(guildId, connection.joinConfig.channelId));
+            }
         });
 
-        connection.on(VoiceConnectionStatus.Disconnected, () => {
+        connection.on(VoiceConnectionStatus.Disconnected, async () => {
             logger.debug(`Voice connection disconnected for guild ${guildId}`);
-            this.emit(BotEvent.ConnectionDisconnected, this.createEventData(guildId, connection.joinConfig.channelId));
+            
+            try {
+                // Try to reconnect if possible
+                await Promise.race([
+                    entersState(connection, VoiceConnectionStatus.Signalling, 5_000),
+                    entersState(connection, VoiceConnectionStatus.Connecting, 5_000),
+                ]);
+            } catch (error) {
+                // If reconnection fails, destroy the connection
+                this.emit(BotEvent.BeforeDisconnect, this.createEventData(guildId, connection.joinConfig.channelId));
+                connection.destroy();
+            }
         });
 
         connection.on('error', (error) => {
@@ -277,20 +299,13 @@ export class VoiceService extends EventEmitter {
 
     public async leaveChannel(guildId: string): Promise<void> {
         const connection = this.state.connections.get(guildId);
-        if (connection) {
-            // Emit event before leaving
-            this.emit(BotEvent.BeforeDisconnect, this.createEventData(guildId, connection.joinConfig.channelId));
-            
-            // Stop playback and leave
-            this.stopPlayback(guildId);
-            connection.destroy();
-            this.state.connections.delete(guildId);
-            this.state.players.delete(guildId);
-            
-            // Emit event after leaving
-            this.emit(BotEvent.AfterDisconnect, this.createEventData(guildId, connection.joinConfig.channelId));
-            logger.debug('Left voice channel', { guildId });
-        }
+        if (!connection) return;
+
+        // Emit event before leaving
+        this.emit(BotEvent.BeforeDisconnect, this.createEventData(guildId, connection.joinConfig.channelId));
+        
+        // Destroy the connection - this will trigger the Destroyed state event
+        connection.destroy();
     }
 
     public pausePlayback(guildId: string): void {

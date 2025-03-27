@@ -2,15 +2,16 @@ import { Result, ok, err } from 'neverthrow';
 import { logger } from '../services/logger/LoggerService';
 
 export enum ErrorType {
-    Discord = 'DISCORD_ERROR',
+    Discord = 'discord',
     Configuration = 'CONFIGURATION_ERROR',
-    Network = 'NETWORK_ERROR',
-    Validation = 'VALIDATION_ERROR',
-    Unknown = 'UNKNOWN_ERROR',
-    FileSystem = 'FILE_SYSTEM_ERROR',
-    YouTube = 'YOUTUBE_ERROR',
+    Network = 'network',
+    Validation = 'validation',
+    Unknown = 'unknown',
+    FileSystem = 'filesystem',
+    YouTube = 'youtube',
     Cache = 'CACHE_ERROR',
-    Permission = 'PERMISSION_ERROR'
+    Permission = 'PERMISSION_ERROR',
+    Spotify = 'spotify'
 }
 
 export interface AppError {
